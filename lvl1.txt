@@ -1,4 +1,4 @@
-mult:=a*b
-div:=a/b
+
 m:=c*d
-d:=c/d
+multp1:=m+1
+d:=c/d+multp1

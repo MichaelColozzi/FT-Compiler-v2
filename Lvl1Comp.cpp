@@ -1,154 +1,199 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <vector>
 #include <string>
 #include <regex>
 #include <unordered_map>
-#include <vector>
 
-// Function to trim leading and trailing whitespace from a string
+// Define structure to hold function metadata
+struct FunctionInfo {
+    std::vector<std::string> outputs;
+    std::vector<std::string> inputs;
+    std::vector<std::string> body;
+
+    FunctionInfo() = default;
+    FunctionInfo(const std::vector<std::string>& outs, const std::vector<std::string>& ins, const std::vector<std::string>& bdy)
+        : outputs(outs), inputs(ins), body(bdy) {}
+};
+
+// Function to trim whitespace from a string
 std::string trim(const std::string& str) {
-    size_t first = str.find_first_not_of(" \t");
-    if (first == std::string::npos) return ""; // no content
-    size_t last = str.find_last_not_of(" \t");
+    size_t first = str.find_first_not_of(' ');
+    if (first == std::string::npos) return "";
+    size_t last = str.find_last_not_of(' ');
     return str.substr(first, last - first + 1);
 }
 
 // Function to split a string by a delimiter
-std::vector<std::string> split(const std::string& str, char delimiter) {
+std::vector<std::string> splitString(const std::string& str, const std::string& delimiter) {
     std::vector<std::string> tokens;
-    std::string token;
-    std::istringstream tokenStream(str);
-    while (std::getline(tokenStream, token, delimiter)) {
-        tokens.push_back(trim(token));
+    size_t start = 0, end = 0;
+    while ((end = str.find(delimiter, start)) != std::string::npos) {
+        tokens.push_back(str.substr(start, end - start));
+        start = end + delimiter.length();
     }
+    tokens.push_back(str.substr(start));
     return tokens;
 }
 
-// Structure to hold function details
-struct Function {
-    std::vector<std::string> outputs;
-    std::vector<std::string> inputs;
-    std::vector<std::string> body;
-};
-
-// Function to parse functions from Level 1 code
-void parseFunctions(std::ifstream& inFile, std::unordered_map<std::string, Function>& functions) {
-    std::string line;
-    std::regex functionPattern(R"(function\s+\[(.*?)\]:=\s*(\w+)\((.*?)\))");
+// Function to parse function definitions
+void parseFunctionDefinitions(const std::vector<std::string>& lines, std::unordered_map<std::string, FunctionInfo>& functions) {
+    std::regex functionPattern(R"(function\s+\[(.*)\]:=\s*(\w+)\((.*)\))");
     std::regex endPattern(R"(end)");
     bool inFunction = false;
-    Function currentFunction;
+    FunctionInfo currentFunction;
     std::string currentFunctionName;
 
-    while (std::getline(inFile, line)) {
-        std::smatch matches;
-        if (!inFunction && std::regex_search(line, matches, functionPattern)) {
+    for (const std::string& line : lines) {
+        std::string trimmedLine = trim(line);
+        std::smatch match;
+
+        if (!inFunction && std::regex_match(trimmedLine, match, functionPattern)) {
             inFunction = true;
-            currentFunctionName = matches[2];
-            currentFunction.outputs = split(matches[1], ',');
-            currentFunction.inputs = split(matches[3], ',');
-        } else if (inFunction && std::regex_search(line, endPattern)) {
+            currentFunctionName = match[2];
+            currentFunction.outputs = splitString(match[1], ",");
+            currentFunction.inputs = splitString(match[3], ",");
+        } else if (inFunction && std::regex_match(trimmedLine, endPattern)) {
             inFunction = false;
             functions[currentFunctionName] = currentFunction;
-            currentFunction = Function();
+            currentFunction = FunctionInfo();
         } else if (inFunction) {
-            currentFunction.body.push_back(trim(line));
+            currentFunction.body.push_back(trimmedLine);
         }
     }
 }
 
-// Function to process a line of Level 1 code and convert to Level 0 syntax
-std::vector<std::string> processFunctionCall(const std::string& line, const std::unordered_map<std::string, Function>& functions) {
-    std::vector<std::string> outputLines;
-    std::string trimmedLine = trim(line);
-    
-    if (trimmedLine.empty()) {
-        return outputLines; // Ignore empty or whitespace-only lines
-    }
+// Function to inline function calls
+void inlineFunctionCalls(std::vector<std::string>& lines, const std::unordered_map<std::string, FunctionInfo>& functions, int& dummyCounter) {
+    std::regex callPattern(R"(\[(.*)\]:=\s*(\w+)\((.*)\))");
 
-    std::regex callPattern(R"(\[(.*?)\]:=\s*(\w+)\((.*?)\))");
-    std::smatch matches;
+    for (auto it = lines.begin(); it != lines.end(); ) {
+        std::string line = *it;
+        std::smatch match;
 
-    if (std::regex_search(trimmedLine, matches, callPattern)) {
-        std::string callOutputs = matches[1];
-        std::string functionName = matches[2];
-        std::string callInputs = matches[3];
+        if (std::regex_match(line, match, callPattern)) {
+            std::string callOutputs = match[1];
+            std::string functionName = match[2];
+            std::string callInputs = match[3];
 
-        if (functions.find(functionName) != functions.end()) {
-            const Function& func = functions.at(functionName);
-            std::vector<std::string> outputVars = split(callOutputs, ',');
-            std::vector<std::string> inputVars = split(callInputs, ',');
+            if (functions.find(functionName) != functions.end()) {
+                const FunctionInfo& func = functions.at(functionName);
+                std::vector<std::string> outputVars = splitString(callOutputs, ",");
+                std::vector<std::string> inputVars = splitString(callInputs, ",");
 
-            // Inline the function body with substituted variables
-            for (const std::string& funcLine : func.body) {
-                std::string processedLine = funcLine;
+                std::unordered_map<std::string, std::string> variableMapping;
+
+                // Map input variables
                 for (size_t i = 0; i < func.inputs.size(); ++i) {
-                    std::regex inputPattern("\\b" + func.inputs[i] + "\\b");
-                    processedLine = std::regex_replace(processedLine, inputPattern, inputVars[i]);
+                    variableMapping[func.inputs[i]] = inputVars[i];
                 }
-                for (size_t i = 0; i < func.outputs.size(); ++i) {
-                    std::regex outputPattern("\\b" + func.outputs[i] + "\\b");
-                    processedLine = std::regex_replace(processedLine, outputPattern, outputVars[i]);
-                }
-                outputLines.push_back(processedLine);
-            }
-        }
-    } else {
-        outputLines.push_back(trimmedLine);
-    }
 
-    return outputLines;
+                // Map output variables
+                for (size_t i = 0; i < func.outputs.size(); ++i) {
+                    variableMapping[func.outputs[i]] = outputVars[i];
+                }
+
+                // Replace the function call line with the inlined body
+                it = lines.erase(it);
+                for (const std::string& funcLine : func.body) {
+                    std::string processedLine = funcLine;
+                    for (const auto& pair : variableMapping) {
+                        std::regex varPattern("\\b" + pair.first + "\\b");
+                        processedLine = std::regex_replace(processedLine, varPattern, pair.second);
+                    }
+
+                    // Handle dummy variables for intermediate variables
+                    std::regex dummyVarPattern(R"((\w+):=)");
+                    std::smatch dummyVarMatch;
+                    if (std::regex_search(processedLine, dummyVarMatch, dummyVarPattern)) {
+                        std::string dummyVar = dummyVarMatch[1];
+                        if (variableMapping.find(dummyVar) == variableMapping.end() && 
+                            std::find(outputVars.begin(), outputVars.end(), dummyVar) == outputVars.end() && 
+                            std::find(inputVars.begin(), inputVars.end(), dummyVar) == inputVars.end()) {
+                            std::string newDummyVar = dummyVar + std::to_string(dummyCounter);
+                            variableMapping[dummyVar] = newDummyVar;
+                            std::regex varPattern("\\b" + dummyVar + "\\b");
+                            processedLine = std::regex_replace(processedLine, varPattern, newDummyVar);
+                        }
+                    }
+
+                    it = lines.insert(it, processedLine) + 1;
+                }
+                dummyCounter++;
+            } else {
+                ++it;
+            }
+        } else {
+            ++it;
+        }
+    }
 }
 
+// Main function for processing
 int main(int argc, char* argv[]) {
     if (argc != 3) {
-        std::cerr << "Usage: " << argv[0] << " <input_file> <output_file>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <input file> <output file>\n";
         return 1;
     }
 
-    std::string inputFileName = argv[1];
-    std::string outputFileName = argv[2];
-
-    std::ifstream inFile(inputFileName);
-    std::ofstream outFile(outputFileName);
-
-    if (!inFile.is_open()) {
-        std::cerr << "Error opening input file!" << std::endl;
+    std::ifstream infile(argv[1]);
+    if (!infile.is_open()) {
+        std::cerr << "Error opening input file: " << argv[1] << "\n";
         return 1;
     }
 
-    if (!outFile.is_open()) {
-        std::cerr << "Error opening output file!" << std::endl;
+    std::ofstream outfile(argv[2]);
+    if (!outfile.is_open()) {
+        std::cerr << "Error opening output file: " << argv[2] << "\n";
         return 1;
     }
 
-    // Parse functions from the Level 1 input file
-    std::unordered_map<std::string, Function> functions;
-    parseFunctions(inFile, functions);
+    std::stringstream buffer;
+    buffer << infile.rdbuf();
+    std::string code = buffer.str();
 
-    // Reset the input file stream to process the lines again
-    inFile.clear();
-    inFile.seekg(0, std::ios::beg);
+    // Split the code into lines
+    std::istringstream codeStream(code);
+    std::vector<std::string> lines;
+    std::string tempLine;
+    while (std::getline(codeStream, tempLine)) {
+        lines.push_back(tempLine);
+    }
 
-    // Process lines and convert to Level 0 syntax
-    std::string line;
+    // Parse function definitions
+    std::unordered_map<std::string, FunctionInfo> functions;
+    parseFunctionDefinitions(lines, functions);
 
-    while (std::getline(inFile, line)) {
-        if (line.find("function") == std::string::npos && line.find("end") == std::string::npos) {
-            std::vector<std::string> lines = processFunctionCall(line, functions);
-            for (const std::string& processedLine : lines) {
-                if (!processedLine.empty()) {
-                    outFile << processedLine << std::endl;
-                }
-            }
+    // Remove function definitions from the original lines
+    std::vector<std::string> codeLines;
+    std::regex functionPattern(R"(function\s+\[(.*)\]:=\s*(\w+)\((.*)\))");
+    std::regex endPattern(R"(end)");
+    bool inFunction = false;
+
+    for (const std::string& line : lines) {
+        std::string trimmedLine = trim(line);
+        if (std::regex_match(trimmedLine, functionPattern)) {
+            inFunction = true;
+        } else if (inFunction && std::regex_match(trimmedLine, endPattern)) {
+            inFunction = false;
+        } else if (!inFunction) {
+            codeLines.push_back(line);
         }
     }
 
-    inFile.close();
-    outFile.close();
+    // Inline function calls
+    int dummyCounter = 1;
+    inlineFunctionCalls(codeLines, functions, dummyCounter);
 
-    std::cout << "Conversion complete. Check " << outputFileName << " for the result." << std::endl;
+    // Output the processed lines
+    for (const auto& line : codeLines) {
+        outfile << line << "\n";
+    }
 
     return 0;
 }
+
+
+
+
