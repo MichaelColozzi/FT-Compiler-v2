@@ -1,0 +1,6 @@
+function [mult,div]:=f(a,b)
+     mult:=a*b
+     div:=a/b
+end
+
+[m,d]:=f(c,d)

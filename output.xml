@@ -1,0 +1,5 @@
+<Variables>
+  <Setter variable="mult:=a*b" />
+  <Setter variable="div:=a/b" />
+  <Setter variable="[m,d]:=f(c,d)" />
+</Variables>
