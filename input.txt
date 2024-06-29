@@ -3,5 +3,8 @@ function [mult,div]:=f(a,b)
      multp:=mult+1
      div:=a/b+multp
 end
+function [boink]:=g(var)
+     boink:=var+1
+end
 
-[m,d]:=f(c,d)
+[m,d]:=f(g(c),d)

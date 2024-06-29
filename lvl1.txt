@@ -1,4 +1,4 @@
 
 m:=c*d
 multp1:=m+1
-d:=c/d+multp1
+array d:=c/d+multp1
